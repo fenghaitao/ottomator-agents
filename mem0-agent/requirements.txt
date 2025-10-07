@@ -57,6 +57,7 @@ markdown-it-py==3.0.0
 MarkupSafe==3.0.2
 mdurl==0.1.2
 git+https://github.com/fenghaitao/mem0.git
+git+https://github.com/fenghaitao/litellm.git
 mistralai==1.5.0
 monotonic==1.6
 multidict==6.1.0
