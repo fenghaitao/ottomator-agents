@@ -1,7 +1,6 @@
 import os
 import streamlit as st
 from dotenv import load_dotenv
-from openai import OpenAI
 from mem0 import Memory
 import supabase
 from supabase.client import Client, ClientOptions
@@ -29,18 +28,25 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Cache OpenAI client and Memory instance
-@st.cache_resource
-def get_openai_client():
-    return OpenAI()
-
+# Cache Memory instance
 @st.cache_resource
 def get_memory():
     config = {
         "llm": {
-            "provider": "openai",
+            "provider": "litellm",
             "config": {
-                "model": model
+                "model": "github_copilot/gpt-4.1",
+                "temperature": 0.7,
+                "max_tokens": 1000,
+                # OAuth2 authentication handled automatically
+            }
+        },
+        "embedder": {
+            "provider": "github_copilot", 
+            "config": {
+                "model": "github_copilot/text-embedding-3-small",
+                "embedding_dims": 1536,
+                # OAuth2 authentication handled automatically
             }
         },
         "vector_store": {
@@ -54,7 +60,6 @@ def get_memory():
     return Memory.from_config(config)
 
 # Get cached resources
-openai_client = get_openai_client()
 memory = get_memory()
 
 # Authentication functions
@@ -111,13 +116,13 @@ def chat_with_memories(message, user_id):
     relevant_memories = memory.search(query=message, user_id=user_id, limit=3)
     memories_str = "\n".join(f"- {entry['memory']}" for entry in relevant_memories["results"])
     
-    # Generate Assistant response
+    # Generate Assistant response using GitHub Copilot through mem0's LLM
     system_prompt = f"You are a helpful AI assistant with memory. Answer the question based on the query and user's memories.\nUser Memories:\n{memories_str}"
     messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": message}]
     
     with st.spinner("Thinking..."):
-        response = openai_client.chat.completions.create(model=model, messages=messages)
-        assistant_response = response.choices[0].message.content
+        # Use mem0's configured LLM (GitHub Copilot) to generate response
+        assistant_response = memory.llm.generate_response(messages)
 
     # Create new memories from the conversation
     messages.append({"role": "assistant", "content": assistant_response})
