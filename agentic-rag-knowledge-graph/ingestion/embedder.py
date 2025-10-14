@@ -10,6 +10,7 @@ from datetime import datetime
 import json
 
 from openai import RateLimitError, APIError
+import litellm
 from dotenv import load_dotenv
 
 from .chunker import DocumentChunk
@@ -62,7 +63,8 @@ class EmbeddingGenerator:
         self.model_configs = {
             "text-embedding-3-small": {"dimensions": 1536, "max_tokens": 8191},
             "text-embedding-3-large": {"dimensions": 3072, "max_tokens": 8191},
-            "text-embedding-ada-002": {"dimensions": 1536, "max_tokens": 8191}
+            "text-embedding-ada-002": {"dimensions": 1536, "max_tokens": 8191},
+            "github_copilot/text-embedding-3-small": {"dimensions": 1536, "max_tokens": 8191}
         }
         
         if model not in self.model_configs:
@@ -87,12 +89,19 @@ class EmbeddingGenerator:
         
         for attempt in range(self.max_retries):
             try:
-                response = await embedding_client.embeddings.create(
-                    model=self.model,
-                    input=text
-                )
-                
-                return response.data[0].embedding
+                # Use LiteLLM for GitHub Copilot models, fallback to OpenAI client for others
+                if self.model.startswith('github_copilot/'):
+                    response = await litellm.aembedding(
+                        model=self.model,
+                        input=text
+                    )
+                    return response.data[0]['embedding']
+                else:
+                    response = await embedding_client.embeddings.create(
+                        model=self.model,
+                        input=text
+                    )
+                    return response.data[0].embedding
                 
             except RateLimitError as e:
                 if attempt == self.max_retries - 1:
@@ -143,12 +152,19 @@ class EmbeddingGenerator:
         
         for attempt in range(self.max_retries):
             try:
-                response = await embedding_client.embeddings.create(
-                    model=self.model,
-                    input=processed_texts
-                )
-                
-                return [data.embedding for data in response.data]
+                # Use LiteLLM for GitHub Copilot models, fallback to OpenAI client for others
+                if self.model.startswith('github_copilot/'):
+                    response = await litellm.aembedding(
+                        model=self.model,
+                        input=processed_texts
+                    )
+                    return [data['embedding'] for data in response.data]
+                else:
+                    response = await embedding_client.embeddings.create(
+                        model=self.model,
+                        input=processed_texts
+                    )
+                    return [data.embedding for data in response.data]
                 
             except RateLimitError as e:
                 if attempt == self.max_retries - 1:

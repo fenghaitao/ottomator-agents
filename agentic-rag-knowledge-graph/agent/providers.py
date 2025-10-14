@@ -1,50 +1,55 @@
 """
-Flexible provider configuration for LLM and embedding models.
+Flexible provider configuration for LLM and embedding models using LiteLLM.
 """
 
 import os
-from typing import Optional
+from typing import Optional, Union
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.litellm import LiteLLMModel
 import openai
+import litellm
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
 
-def get_llm_model(model_choice: Optional[str] = None) -> OpenAIModel:
+def get_llm_model(model_choice: Optional[str] = None) -> Union[LiteLLMModel, OpenAIModel]:
     """
-    Get LLM model configuration based on environment variables.
+    Get LLM model configuration based on environment variables using LiteLLM.
     
     Args:
         model_choice: Optional override for model choice
     
     Returns:
-        Configured OpenAI-compatible model
+        Configured LiteLLM model for GitHub Copilot or OpenAI model for other providers
     """
-    llm_choice = model_choice or os.getenv('LLM_CHOICE', 'gpt-4-turbo-preview')
-    base_url = os.getenv('LLM_BASE_URL', 'https://api.openai.com/v1')
-    api_key = os.getenv('LLM_API_KEY', 'ollama')
+    llm_choice = model_choice or os.getenv('LLM_CHOICE', 'github_copilot/gpt-4.1')
+    api_key = os.getenv('LLM_API_KEY', '')
     
-    provider = OpenAIProvider(base_url=base_url, api_key=api_key)
-    return OpenAIModel(llm_choice, provider=provider)
+    # For GitHub Copilot models, use native LiteLLM support
+    if llm_choice.startswith('github_copilot/'):
+        print(f"✅ Using native LiteLLM GitHub Copilot model: {llm_choice}")
+        return LiteLLMModel(llm_choice)
+    else:
+        # For non-GitHub Copilot models, use OpenAI provider
+        provider = OpenAIProvider(api_key=api_key)
+        return OpenAIModel(llm_choice, provider=provider)
 
 
 def get_embedding_client() -> openai.AsyncOpenAI:
     """
-    Get embedding client configuration based on environment variables.
+    Get embedding client configuration based on environment variables using LiteLLM.
     
     Returns:
-        Configured OpenAI-compatible client for embeddings
+        Configured OpenAI-compatible client for embeddings through LiteLLM
     """
-    base_url = os.getenv('EMBEDDING_BASE_URL', 'https://api.openai.com/v1')
-    api_key = os.getenv('EMBEDDING_API_KEY', 'ollama')
+    api_key = os.getenv('EMBEDDING_API_KEY', '')
     
-    return openai.AsyncOpenAI(
-        base_url=base_url,
-        api_key=api_key
-    )
+    # LiteLLM handles GitHub Copilot embeddings directly
+    # We use standard OpenAI client but LiteLLM will route based on model name
+    return openai.AsyncOpenAI(api_key=api_key)
 
 
 def get_embedding_model() -> str:
@@ -54,10 +59,10 @@ def get_embedding_model() -> str:
     Returns:
         Embedding model name
     """
-    return os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')
+    return os.getenv('EMBEDDING_MODEL', 'github_copilot/text-embedding-3-small')
 
 
-def get_ingestion_model() -> OpenAIModel:
+def get_ingestion_model() -> Union[LiteLLMModel, OpenAIModel]:
     """
     Get ingestion-specific LLM model (can be faster/cheaper than main model).
     
@@ -76,12 +81,12 @@ def get_ingestion_model() -> OpenAIModel:
 # Provider information functions
 def get_llm_provider() -> str:
     """Get the LLM provider name."""
-    return os.getenv('LLM_PROVIDER', 'openai')
+    return os.getenv('LLM_PROVIDER', 'github_copilot')
 
 
 def get_embedding_provider() -> str:
     """Get the embedding provider name."""
-    return os.getenv('EMBEDDING_PROVIDER', 'openai')
+    return os.getenv('EMBEDDING_PROVIDER', 'github_copilot')
 
 
 def validate_configuration() -> bool:
@@ -91,12 +96,20 @@ def validate_configuration() -> bool:
     Returns:
         True if configuration is valid
     """
-    required_vars = [
-        'LLM_API_KEY',
-        'LLM_CHOICE',
-        'EMBEDDING_API_KEY',
-        'EMBEDDING_MODEL'
-    ]
+    # For GitHub Copilot, OAuth2 is used, so API keys are not strictly required
+    provider = get_llm_provider()
+    
+    if provider == 'github_copilot':
+        # GitHub Copilot uses OAuth2, just check model configuration
+        required_vars = ['LLM_CHOICE', 'EMBEDDING_MODEL']
+    else:
+        # Other providers need API keys
+        required_vars = [
+            'LLM_API_KEY',
+            'LLM_CHOICE', 
+            'EMBEDDING_API_KEY',
+            'EMBEDDING_MODEL'
+        ]
     
     missing_vars = []
     for var in required_vars:
