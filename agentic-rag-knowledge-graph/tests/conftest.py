@@ -30,9 +30,26 @@ os.environ.setdefault("INGESTION_LLM_CHOICE", "gpt-4o-mini")
 @pytest.fixture(scope="session")
 def event_loop():
     """Create an instance of the default event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
+    policy = asyncio.get_event_loop_policy()
+    loop = policy.new_event_loop()
+    policy.set_event_loop(loop)
     yield loop
-    loop.close()
+    # Clean up any pending tasks before closing the loop
+    try:
+        # Cancel all running tasks
+        pending = asyncio.all_tasks(loop)
+        for task in pending:
+            task.cancel()
+        
+        # Wait for all tasks to complete cancellation
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    except Exception:
+        pass  # Ignore cleanup errors
+    finally:
+        # Close the loop
+        if not loop.is_closed():
+            loop.close()
 
 
 @pytest.fixture
@@ -97,6 +114,10 @@ def mock_graphiti_client():
     with patch('agent.graph_utils.GraphitiClient') as mock_client_class:
         mock_client = AsyncMock()
         mock_client_class.return_value = mock_client
+        
+        # Mock proper async cleanup
+        mock_client.close = AsyncMock()
+        mock_client._initialized = True
         
         # Mock search results
         mock_client.search.return_value = [
@@ -339,6 +360,68 @@ def setup_test_environment():
     
     # Re-enable logging after tests
     logging.disable(logging.NOTSET)
+
+
+@pytest.fixture(autouse=True)
+async def cleanup_async_resources():
+    """Cleanup async resources after each test to prevent warnings."""
+    yield
+    
+    # Give more time for any pending coroutines to complete
+    try:
+        await asyncio.sleep(0.05)
+        
+        # Check for and clean up any remaining tasks
+        current_task = None
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:
+            pass
+        
+        if current_task:
+            loop = current_task.get_loop()
+            
+            # Get all tasks except the current one
+            all_tasks = asyncio.all_tasks(loop)
+            pending_tasks = [task for task in all_tasks if task != current_task and not task.done()]
+            
+            if pending_tasks:
+                logger.debug(f"Found {len(pending_tasks)} pending tasks during cleanup")
+                
+                # Try graceful completion first
+                try:
+                    await asyncio.wait_for(
+                        asyncio.sleep(0.02),  # Give tasks a moment to complete naturally
+                        timeout=0.05
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                
+                # Check again for remaining tasks
+                still_pending = [task for task in pending_tasks if not task.done()]
+                
+                if still_pending:
+                    # Cancel remaining tasks
+                    for task in still_pending:
+                        if not task.cancelled():
+                            task.cancel()
+                    
+                    # Wait for cancellation to complete
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.gather(*still_pending, return_exceptions=True),
+                            timeout=0.2
+                        )
+                    except asyncio.TimeoutError:
+                        logger.debug("Some tasks did not cancel within timeout")
+                
+        # Final cleanup delay
+        await asyncio.sleep(0.02)
+        
+    except Exception as e:
+        # Log cleanup errors but don't fail tests
+        logger.debug(f"Cleanup error (ignored): {e}")
+        pass
 
 
 # Async test helpers
